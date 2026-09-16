@@ -1,7 +1,6 @@
-version: "3"
 services:
   postgres:
-    image: library/postgres:13
+    image: postgres:15-alpine
     container_name: postgres
     restart: on-failure
     environment:
@@ -13,8 +12,107 @@ services:
       - ./postgres/:/docker-entrypoint-initdb.d/
     ports:
       - "5432:5432"
+    networks:
+      - library-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-# TODO добавить сервисы
+  reservation:
+    build:
+      context: ./src/
+      dockerfile: ReservationServer/Dockerfile
+    container_name: reservation
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8070:8080"
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=reservations;Username=program;Password=test
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rating:
+    build:
+      context: ./src/
+      dockerfile: RatingServer/Dockerfile
+    container_name: rating
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8050:8080"
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=ratings;Username=program;Password=test
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      
+  library:
+    build:
+      context: ./src/
+      dockerfile: LibraryServer/Dockerfile
+    container_name: library
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8060:8080"
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=libraries;Username=program;Password=test
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      
+  gateway:
+    build:
+      context: ./src/
+      dockerfile: GatewayServer/Dockerfile
+    container_name: gateway
+    restart: on-failure
+    depends_on:
+      reservation:
+        condition: service_healthy
+      rating:
+        condition: service_healthy
+      library:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - ServiceUrls__LibraryServiceUrl=http://library:8080
+      - ServiceUrls__RatingServiceUrl=http://rating:8080
+      - ServiceUrls__ReservationServiceUrl=http://reservation:8080
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   db-data:
+
+networks:
+  library-network:
+    driver: bridge
