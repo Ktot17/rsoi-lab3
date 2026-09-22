@@ -1,8 +1,7 @@
-version: "3"
 services:
   postgres:
-    image: library/postgres:13
-    container_name: postgres
+    image: postgres:15-alpine
+    container_name: postgres-lab3
     restart: on-failure
     environment:
       POSTGRES_USER: postgres
@@ -13,8 +12,139 @@ services:
       - ./postgres/:/docker-entrypoint-initdb.d/
     ports:
       - "5432:5432"
+    networks:
+      - library-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-# TODO добавить сервисы
+  reservation:
+    build:
+      context: ./src/
+      dockerfile: ReservationServer/Dockerfile
+    container_name: reservation-lab3
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8070:8080"
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=reservations;Username=program;Password=test
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rating:
+    build:
+      context: ./src/
+      dockerfile: RatingServer/Dockerfile
+    container_name: rating-lab3
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8050:8080"
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=ratings;Username=program;Password=test
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      
+  library:
+    build:
+      context: ./src/
+      dockerfile: LibraryServer/Dockerfile
+    container_name: library-lab3
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8060:8080"
+    environment:
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=libraries;Username=program;Password=test
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-lab3
+    restart: on-failure
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      
+  gateway:
+    build:
+      context: ./src/
+      dockerfile: GatewayServer/Dockerfile
+    container_name: gateway-lab3
+    restart: on-failure
+    depends_on:
+      reservation:
+        condition: service_healthy
+      rating:
+        condition: service_healthy
+      library:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - ServiceUrls__LibraryServiceUrl=http://library:8080
+      - ServiceUrls__RatingServiceUrl=http://rating:8080
+      - ServiceUrls__ReservationServiceUrl=http://reservation:8080
+      - RabbitMq__Host=rabbitmq
+      - RabbitMq__Port=5672
+      - RabbitMq__Username=app
+      - RabbitMq__Password=app
+      - RabbitMq__MainExchange=main.exchange
+      - RabbitMq__MainQueue=main.queue
+      - RabbitMq__RetryExchange=retry.exchange
+      - RabbitMq__RetryQueue=retry.queue
+      - RabbitMq__RoutingKey=routing.key
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/manage/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   db-data:
+  rabbitmq_data:
+
+networks:
+  library-network:
+    driver: bridge
