@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: postgres
+    container_name: postgres-lab3
     restart: on-failure
     environment:
       POSTGRES_USER: postgres
@@ -24,7 +24,7 @@ services:
     build:
       context: ./src/
       dockerfile: ReservationServer/Dockerfile
-    container_name: reservation
+    container_name: reservation-lab3
     restart: on-failure
     depends_on:
       postgres:
@@ -45,7 +45,7 @@ services:
     build:
       context: ./src/
       dockerfile: RatingServer/Dockerfile
-    container_name: rating
+    container_name: rating-lab3
     restart: on-failure
     depends_on:
       postgres:
@@ -66,7 +66,7 @@ services:
     build:
       context: ./src/
       dockerfile: LibraryServer/Dockerfile
-    container_name: library
+    container_name: library-lab3
     restart: on-failure
     depends_on:
       postgres:
@@ -82,12 +82,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-lab3
+    restart: on-failure
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - library-network
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
       
   gateway:
     build:
       context: ./src/
       dockerfile: GatewayServer/Dockerfile
-    container_name: gateway
+    container_name: gateway-lab3
     restart: on-failure
     depends_on:
       reservation:
@@ -96,12 +116,23 @@ services:
         condition: service_healthy
       library:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     ports:
       - "8080:8080"
     environment:
       - ServiceUrls__LibraryServiceUrl=http://library:8080
       - ServiceUrls__RatingServiceUrl=http://rating:8080
       - ServiceUrls__ReservationServiceUrl=http://reservation:8080
+      - RabbitMq__Host=rabbitmq
+      - RabbitMq__Port=5672
+      - RabbitMq__Username=app
+      - RabbitMq__Password=app
+      - RabbitMq__MainExchange=main.exchange
+      - RabbitMq__MainQueue=main.queue
+      - RabbitMq__RetryExchange=retry.exchange
+      - RabbitMq__RetryQueue=retry.queue
+      - RabbitMq__RoutingKey=routing.key
     networks:
       - library-network
     healthcheck:
@@ -112,6 +143,7 @@ services:
 
 volumes:
   db-data:
+  rabbitmq_data:
 
 networks:
   library-network:
